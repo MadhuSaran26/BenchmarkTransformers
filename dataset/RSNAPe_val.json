@@ -1,0 +1,5 @@
+{
+    "image_dict":"/data/jliang12/shared/dataset/RSNA_PE/process_input/split2/image_dict.pickle",
+    "bbox_dict":"/data/jliang12/shared/dataset/RSNA_PE/lung_localization/split2/bbox_dict_valid.pickle",
+    "image_list":"/data/jliang12/shared/dataset/RSNA_PE/process_input/split2/image_list_valid.pickle"
+}
