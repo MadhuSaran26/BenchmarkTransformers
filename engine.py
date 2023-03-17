@@ -99,15 +99,20 @@ def classification_engine(args, model_path, output_path, diseases, dataset_train
 
 
       for epoch in range(start_epoch, args.epochs):
-        train_one_epoch(data_loader_train,device, model, criterion, optimizer, epoch)
+        train_one_epoch(args, data_loader_train,device, model, criterion, optimizer, epoch)
 
-        val_loss = evaluate(data_loader_val, device,model, criterion)
+        val_loss, val_auc = evaluate(args, data_loader_val, device,model, criterion)
 
         lr_scheduler.step(val_loss)
 
         if val_loss < best_val_loss:
-          print(
-            "Epoch {:04d}: val_loss improved from {:.5f} to {:.5f}, saving model to {}".format(epoch, best_val_loss, val_loss,
+          if args.data_set == "RSNAPe":
+            print(
+            "Epoch {:04d}: val_loss improved from {:.5f} to {:.5f}, val_auc is {:.5f} saving model to {}".format(epoch, best_val_loss, val_loss,
+                                                                                               val_auc, save_model_path)) 
+          else:
+            print(
+              "Epoch {:04d}: val_loss improved from {:.5f} to {:.5f}, saving model to {}".format(epoch, best_val_loss, val_loss,
                                                                                                save_model_path))
           save_checkpoint({
             'epoch': epoch + 1,

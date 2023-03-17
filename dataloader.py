@@ -4,6 +4,8 @@ import random
 import copy
 import csv
 from PIL import Image
+import json
+import pickle5 as pickle
 
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
@@ -17,7 +19,7 @@ from albumentations import (
     RandomBrightness, RandomBrightnessContrast, RandomGamma,OneOf,
     ToFloat, ShiftScaleRotate,GridDistortion, ElasticTransform, JpegCompression, HueSaturationValue,
     RGBShift, RandomBrightness, RandomContrast, Blur, MotionBlur, MedianBlur, GaussNoise,CenterCrop,
-    IAAAdditiveGaussianNoise,GaussNoise,OpticalDistortion,RandomSizedCrop
+    IAAAdditiveGaussianNoise,GaussNoise,OpticalDistortion,RandomSizedCrop, Cutout, Normalize
 )
 
 
@@ -83,7 +85,25 @@ def build_transform_segmentation():
 
   return AUGMENTATIONS_TRAIN
 
+def build_transform__pe_classification(image_size=576):
+    
+    transformsequence = Compose([
+            RandomContrast(limit=0.2, p=1.0),
+            ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=20, border_mode=cv2.BORDER_CONSTANT, p=1.0),
+            Cutout(num_holes=2, max_h_size=int(0.4*image_size), max_w_size=int(0.4*image_size), fill_value=0, always_apply=True, p=1.0),
+            # Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=255.0, p=1.0) # Old
+            Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), max_pixel_value=1.0, p=1.0) # New
+        ]) 
+    
+    return transformsequence
 
+def window_pe(img, WL=50, WW=350):
+    upper, lower = WL+WW//2, WL-WW//2 # 400 to -300
+    X = np.clip(img.copy(), lower, upper)
+    X = X - np.min(X)
+    X = X / np.max(X)
+    # X = (X*255.0).astype('uint8')
+    return X
 
 
 class ChestXray14Dataset(Dataset):
@@ -364,3 +384,50 @@ class RSNAPneumonia(Dataset):
 
     return len(self.img_list)
 
+# -------------------------------------------- RSNA PE------------------------------------------
+class PEDataset(Dataset):
+    def __init__(self, data_dir, file_path, target_size,  mode = 'train'):
+        with open(file_path) as f:
+          path_list = json.load(f)
+        with open(path_list['image_dict'], 'rb') as f:
+          self.image_dict= pickle.load(f)
+        with open(path_list['bbox_dict'], 'rb') as f:
+          self.bbox_dict= pickle.load(f)
+        with open(path_list['image_list'], 'rb') as f:
+          self.image_list= pickle.load(f)
+        self.target_size=target_size
+        self.transform=build_transform__pe_classification(target_size)
+        self.data_dir = data_dir
+        self.mode = mode
+    def __len__(self):
+        return len(self.image_list)
+    def __getitem__(self,index):
+        study_id = self.image_dict[self.image_list[index]]['series_id'].split('_')[0]
+        series_id = self.image_dict[self.image_list[index]]['series_id'].split('_')[1]
+        data1 = dicom.dcmread(self.data_dir+study_id+'/'+series_id+'/'+self.image_dict[self.image_list[index]]['image_minus1']+'.dcm')
+        data2 = dicom.dcmread(self.data_dir+study_id+'/'+series_id+'/'+self.image_list[index]+'.dcm')
+        data3 = dicom.dcmread(self.data_dir+study_id+'/'+series_id+'/'+self.image_dict[self.image_list[index]]['image_plus1']+'.dcm')
+        x1 = data1.pixel_array
+        x2 = data2.pixel_array
+        x3 = data3.pixel_array
+        x1 = x1*data1.RescaleSlope+data1.RescaleIntercept
+        x2 = x2*data2.RescaleSlope+data2.RescaleIntercept
+        x3 = x3*data3.RescaleSlope+data3.RescaleIntercept
+        x1 = np.expand_dims(window_pe(x1, WL=100, WW=700), axis=2)
+        x2 = np.expand_dims(window_pe(x2, WL=100, WW=700), axis=2)
+        x3 = np.expand_dims(window_pe(x3, WL=100, WW=700), axis=2)
+        x = np.concatenate([x1, x2, x3], axis=2)
+        # print("CHECK: x shape = " + str(x.shape))
+        bbox = self.bbox_dict[self.image_dict[self.image_list[index]]['series_id']]
+        # print("CHECK: bbox = " + str(bbox))
+        x = x[bbox[1]:bbox[3],bbox[0]:bbox[2],:]
+        # print("CHECK: x shape = " + str(x.shape))
+        x = cv2.resize(x, (self.target_size,self.target_size))
+        if self.mode == "train":
+          x = self.transform(image=x)['image']
+          x = x.transpose(2, 0, 1)
+        else:
+          x = transforms.ToTensor()(x)
+          x = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(x) 
+        y = self.image_dict[self.image_list[index]]['pe_present_on_image']
+        return x, y

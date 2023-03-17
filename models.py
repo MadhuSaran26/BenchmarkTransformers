@@ -103,6 +103,9 @@ def build_classification_model(args):
                 model = simmim.create_model(args)
             elif args.init.lower() =="imagenet_1k":
                 model = timm.create_model('swin_base_patch4_window7_224', num_classes=args.num_class, checkpoint_path=args.pretrained_weights)
+            elif args.init.lower() =="ark_teacher" or args.init.lower() =="ark_student":
+                model = timm.create_model('swin_base_patch4_window7_224_in22k', num_classes=args.num_class, pretrained=False)
+                load_pretrained_weights(model, args.init.lower(), args.pretrained_weights)
 
                 
         elif args.model_name.lower() == "swin_tiny": 
@@ -136,6 +139,36 @@ def load_pretrained_weights(model, init, pretrained_weights):
         state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
         # remove `backbone.` prefix induced by multicrop wrapper
         state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+    elif init =="ark_teacher":
+        checkpoint_key = "teacher"
+        if checkpoint_key is not None and checkpoint_key in checkpoint:
+            print(f"Take key {checkpoint_key} in provided checkpoint dict")
+            state_dict = checkpoint[checkpoint_key]
+        # removing weights of layers that are not present in the Swin Base model
+        keys_to_be_deleted = [k for k in state_dict.keys() if 'head' in k or 'projector' in k]
+        for key in keys_to_be_deleted:
+            del state_dict[key]
+        # remove `module.` prefix
+        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        # load the state dictionary of the pretrained model, except for the head by keeping the random weights
+        state_dict = {key: state_dict[key] for key, value in model.state_dict().items() if key not in ['head.weight', 'head.bias']}
+        state_dict['head.weight'] = model.state_dict()['head.weight']
+        state_dict['head.bias'] = model.state_dict()['head.bias']
+    elif init =="ark_student":
+        checkpoint_key = "state_dict"
+        if checkpoint_key is not None and checkpoint_key in checkpoint:
+            print(f"Take key {checkpoint_key} in provided checkpoint dict")
+            state_dict = checkpoint[checkpoint_key]
+        # removing weights of layers that are not present in the Swin Base model
+        keys_to_be_deleted = [k for k in state_dict.keys() if 'head' in k or 'projector' in k]
+        for key in keys_to_be_deleted:
+            del state_dict[key]
+        # remove `module.` prefix
+        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        # load the state dictionary of the pretrained model, except for the head by keeping the random weights
+        state_dict = {key: state_dict[key] for key, value in model.state_dict().items() if key not in ['head.weight', 'head.bias']}
+        state_dict['head.weight'] = model.state_dict()['head.weight']
+        state_dict['head.bias'] = model.state_dict()['head.bias']
     elif init =="moco_v3":
         state_dict = checkpoint['state_dict']
         for k in list(state_dict.keys()):

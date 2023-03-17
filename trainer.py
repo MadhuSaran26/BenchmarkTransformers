@@ -1,11 +1,13 @@
-from utils import MetricLogger, ProgressLogger
+from utils import MetricLogger, ProgressLogger, metric_AUROC
 from models import ClassificationNet, build_classification_model
+from sklearn.metrics import roc_auc_score
+import numpy as np
 import time
 import torch
 from tqdm import tqdm
 
 
-def train_one_epoch(data_loader_train, device,model, criterion, optimizer, epoch):
+def train_one_epoch(args, data_loader_train, device,model, criterion, optimizer, epoch):
   batch_time = MetricLogger('Time', ':6.3f')
   losses = MetricLogger('Loss', ':.4e')
   progress = ProgressLogger(
@@ -20,6 +22,13 @@ def train_one_epoch(data_loader_train, device,model, criterion, optimizer, epoch
     samples, targets = samples.float().to(device), targets.float().to(device)
     
     outputs = model(samples)
+
+    if args.data_set == "RSNAPe":
+      targets = torch.squeeze(targets)
+      outputs = torch.squeeze(outputs)
+      outputs = torch.sigmoid(outputs)
+      criterion = torch.nn.BCELoss()
+    
     loss = criterion(outputs, targets)
 
     optimizer.zero_grad()
@@ -34,7 +43,7 @@ def train_one_epoch(data_loader_train, device,model, criterion, optimizer, epoch
       progress.display(i)
 
 
-def evaluate(data_loader_val, device, model, criterion):
+def evaluate(args, data_loader_val, device, model, criterion):
   model.eval()
 
   with torch.no_grad():
@@ -45,10 +54,26 @@ def evaluate(data_loader_val, device, model, criterion):
       [batch_time, losses], prefix='Val: ')
 
     end = time.time()
+    outputlist = []
+    targetlist = []
+    auc = 0.0
+
     for i, (samples, targets) in enumerate(data_loader_val):
       samples, targets = samples.float().to(device), targets.float().to(device)
 
       outputs = model(samples)
+
+      if args.data_set == "RSNAPe":
+        targets = torch.squeeze(targets)
+        outputs = torch.squeeze(outputs)
+        outputs = torch.sigmoid(outputs)
+        criterion = torch.nn.BCELoss()
+        targetlist.extend(torch.unsqueeze(targets,1))
+        outputlist.extend(torch.unsqueeze(outputs,1))
+      else:
+        targetlist.extend(targets)
+        outputlist.extend(outputs)
+
       loss = criterion(outputs, targets)
 
       losses.update(loss.item(), samples.size(0))
@@ -58,8 +83,13 @@ def evaluate(data_loader_val, device, model, criterion):
 
       if i % 50 == 0:
         progress.display(i)
+    
+    if args.data_set == "RSNAPe":
+      auc = roc_auc_score(torch.tensor(targetlist), torch.tensor(outputlist))
+    else:
+      auc = metric_AUROC(torch.tensor(targetlist), torch.tensor(outputlist), args.num_class)
 
-  return losses.avg
+  return losses.avg, np.average(auc)
 
 
 def test_classification(checkpoint, data_loader_test, device, args):
