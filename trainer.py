@@ -1,6 +1,7 @@
 from utils import MetricLogger, ProgressLogger, metric_AUROC
 from models import ClassificationNet, build_classification_model
-from sklearn.metrics import roc_auc_score
+from torchmetrics.classification import BinaryAUROC
+#from sklearn.metrics import roc_auc_score
 import numpy as np
 import time
 import torch
@@ -24,10 +25,7 @@ def train_one_epoch(args, data_loader_train, device,model, criterion, optimizer,
     outputs = model(samples)
 
     if args.data_set == "RSNAPe":
-      targets = torch.squeeze(targets)
-      outputs = torch.squeeze(outputs)
-      outputs = torch.sigmoid(outputs)
-      criterion = torch.nn.BCELoss()
+      outputs = outputs.view(-1)
     
     loss = criterion(outputs, targets)
 
@@ -64,10 +62,7 @@ def evaluate(args, data_loader_val, device, model, criterion):
       outputs = model(samples)
 
       if args.data_set == "RSNAPe":
-        targets = torch.squeeze(targets)
-        outputs = torch.squeeze(outputs)
-        outputs = torch.sigmoid(outputs)
-        criterion = torch.nn.BCELoss()
+        outputs = outputs.view(-1)
         targetlist.extend(torch.unsqueeze(targets,1))
         outputlist.extend(torch.unsqueeze(outputs,1))
       else:
@@ -77,7 +72,6 @@ def evaluate(args, data_loader_val, device, model, criterion):
       loss = criterion(outputs, targets)
 
       losses.update(loss.item(), samples.size(0))
-      losses.update(loss.item(), samples.size(0))
       batch_time.update(time.time() - end)
       end = time.time()
 
@@ -85,7 +79,8 @@ def evaluate(args, data_loader_val, device, model, criterion):
         progress.display(i)
     
     if args.data_set == "RSNAPe":
-      auc = roc_auc_score(torch.tensor(targetlist), torch.tensor(outputlist))
+      metric = BinaryAUROC(thresholds=None)
+      auc = metric(torch.tensor(outputlist), torch.tensor(targetlist))
     else:
       auc = metric_AUROC(torch.tensor(targetlist), torch.tensor(outputlist), args.num_class)
 
